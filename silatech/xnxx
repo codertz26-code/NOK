@@ -1,0 +1,123 @@
+// ==================== XNXX SEARCH & DOWNLOAD ====================
+// File: silatech/xnxx.js
+// Commands: .xnxxsearch <query>   |   .xnxxdl <video link>
+
+const fetch = require('node-fetch');
+const { sendButtons } = require('gifted-btns');
+
+const xnxxCommand = {
+    silacmd: "xnxxsearch",
+    alias: ["xnxxdl", "xnxx"],
+    category: "nsfw",
+    description: "XNXX Search and Download using Skyzopedia API",
+    usage: ".xnxxsearch mommy\n.xnxxdl <xnxx video link>",
+    premium: false,
+    sudo: false,
+    owner: false,
+    
+    function: async (from, conn, params) => {
+        const { 
+            ms, 
+            args,
+            prefixe,
+            silaConfig,
+            command
+        } = params;
+
+        const botIdentity = silaConfig.getBotConfig();
+        const text = args.join(" ");
+
+        if (!text) {
+            return await conn.sendMessage(from, {
+                text: `> ♱ 👻 *XNXX COMMAND* ♱\n\n` +
+                      `> *Usage:*\n` +
+                      `> ${prefixe}xnxxsearch <query>   (e.g. mommy)\n` +
+                      `> ${prefixe}xnxxdl <xnxx link>\n\n` +
+                      `> Example:\n` +
+                      `> ${prefixe}xnxxsearch stepmom`,
+                contextInfo: silaConfig.getContextInfo(ms.key.participant || ms.key.remoteJid, botIdentity)
+            }, { quoted: ms });
+        }
+
+        try {
+            await conn.sendMessage(from, {
+                text: `> ♱ 👻 *Processing...* ♱\n> Please wait a moment...`,
+                contextInfo: silaConfig.getContextInfo(ms.key.participant || ms.key.remoteJid, botIdentity)
+            }, { quoted: ms });
+
+            let apiUrl = "";
+
+            if (command === "xnxxsearch") {
+                apiUrl = `https://api.skyzopedia.web.id/search/xnxx?apikey=skyy&query=${encodeURIComponent(text)}`;
+            } else if (command === "xnxxdl") {
+                apiUrl = `https://api.skyzopedia.web.id/download/xnxx?apikey=skyy&url=${encodeURIComponent(text)}`;
+            }
+
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+
+            if (!data.status || !data.result) {
+                throw new Error("No results found or API error");
+            }
+
+            if (command === "xnxxsearch") {
+                // Search Mode - Onyesha orodha ya video (top 5)
+                let resultText = `> ♱ 👻 *XNXX SEARCH RESULTS* ♱\n\n` +
+                                `> 🔍 *Query:* ${text}\n\n`;
+
+                const results = Array.isArray(data.result) ? data.result.slice(0, 5) : [];
+
+                if (results.length === 0) {
+                    resultText += "> No results found.";
+                } else {
+                    results.forEach((vid, index) => {
+                        resultText += `> *${index + 1}.* ${vid.title || "Untitled"}\n` +
+                                     `> ⏱ ${vid.duration || "-"}   👁 ${vid.views || "-"}\n` +
+                                     `> 🔗 ${vid.link}\n\n`;
+                    });
+                    resultText += `> Copy the link and use:\n> ${prefixe}xnxxdl <link>`;
+                }
+
+                await conn.sendMessage(from, {
+                    text: resultText,
+                    contextInfo: silaConfig.getContextInfo(ms.key.participant || ms.key.remoteJid, botIdentity)
+                }, { quoted: ms });
+
+            } else if (command === "xnxxdl") {
+                // Download Mode
+                const result = data.result;
+
+                const caption = `> ♱ 👻 *XNXX DOWNLOADER* ♱\n\n` +
+                               `> 📽 *Title:* ${result.title || "Untitled"}\n\n` +
+                               `> 📥 *Downloading video...*\n` +
+                               `> Please wait...`;
+
+                await conn.sendMessage(from, {
+                    text: caption,
+                    contextInfo: silaConfig.getContextInfo(ms.key.participant || ms.key.remoteJid, botIdentity)
+                }, { quoted: ms });
+
+                // Note: Kwa sasa download endpoint inaonekana hairudishi link halisi ya video.
+                // Ikiwa baadaye inabadilika na kurudisha "url" au "download" field, tunaweza kuiboresha.
+                // Kwa muda huu tunaonyesha result tu.
+
+                await conn.sendMessage(from, {
+                    text: `> ♱ 👻 *Download Info* ♱\n\n` +
+                          `> Title: ${result.title || "N/A"}\n` +
+                          `> API returned limited data.\n\n` +
+                          `> Try searching first with .xnxxsearch`,
+                    contextInfo: silaConfig.getContextInfo(ms.key.participant || ms.key.remoteJid, botIdentity)
+                }, { quoted: ms });
+            }
+
+        } catch (err) {
+            console.error("XNXX Command Error:", err);
+            await conn.sendMessage(from, {
+                text: `> ♱ 👻 *Error!* ♱\n\n> ${err.message || "Failed to fetch from API"}\n> Jaribu tena baadaye.`,
+                contextInfo: silaConfig.getContextInfo(ms.key.participant || ms.key.remoteJid, botIdentity)
+            }, { quoted: ms });
+        }
+    }
+};
+
+module.exports = xnxxCommand;

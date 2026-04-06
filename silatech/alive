@@ -1,0 +1,33 @@
+// silatech/alive.js
+module.exports = {
+    silacmd: "alive2",
+    alias: ["sila", "online", "status"],
+    category: "general",
+    description: "Check if bot is online",
+    usage: "alive",
+    function: async (from, sila, { repondre, args, prefixe, botName }) => {
+        const start = Date.now();
+        
+        // Get bot info
+        const botNumber = sila.user.id.split(':')[0];
+        const uptime = process.uptime();
+        const hours = Math.floor(uptime / 3600);
+        const minutes = Math.floor((uptime % 3600) / 60);
+        const seconds = Math.floor(uptime % 60);
+        
+        const uptimeString = `${hours}h ${minutes}m ${seconds}s`;
+        
+        const response = `╭━━━[ ♱ ${botName} ♱ ]━━━╮
+┃ ✦ *Status* : 🟢 ONLINE
+┃ ✦ *Ping* : ${Date.now() - start}ms
+┃ ✦ *Uptime* : ${uptimeString}
+┃ ✦ *Bot Number* : ${botNumber}
+┃ ✦ *Commands* : ${global.silaCommands.size}
+┃ ✦ *Categories* : ${global.categories.size}
+╰━━━━━━━━━━━━━━━━━━╯
+        
+♱ *I'm alive and ready to serve!* ♱`;
+        
+        await repondre(response);
+    }
+};
