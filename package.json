@@ -1,0 +1,41 @@
+{
+  "name": "SILA-TECH-Bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@skycodee/libsignal": "^1.0.13",
+    "adm-zip": "^0.5.16",
+    "axios": "^0.24.0",
+    "baileys": "github:whofik/baileys-sawit",
+    "chalk": "^4.1.2",
+    "cheerio": "^1.1.0",
+    "child_process": "^1.0.2",
+    "crypto": "^1.0.1",
+    "ffmpeg": "^0.0.4",
+    "file-type": "^16.5.3",
+    "fluent-ffmpeg": "^2.1.2",
+    "form-data": "^4.0.5",
+    "fs": "^0.0.1-security",
+    "gifted-btns": "^1.0.2",
+    "jimp": "^0.22.12",
+    "js-confuser": "^2.0.0",
+    "link-preview-js": "^3.1.0",
+    "moment-timezone": "^0.5.48",
+    "mongoose": "^7.3.4",
+    "node-fetch": "^2.7.0",
+    "node-os-utils": "^2.0.1",
+    "node-upload-images": "*",
+    "node-webpmux": "^3.1.0",
+    "os": "^0.1.2",
+    "performance-now": "^2.1.0",
+    "pino": "latest",
+    "qrcode-terminal": "^0.12.0",
+    "tar": "^7.5.9",
+    "terser": "^5.46.0",
+    "util": "^0.12.5",
+    "yt-search": "^2.13.1"
+  }
+}
