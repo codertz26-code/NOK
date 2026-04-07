@@ -4,7 +4,7 @@ Powerful WhatsApp Bot with Session Generator
 
 ## 🚀 Deploy to Heroku
 
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/codertz26/NOK)
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://dashboard.heroku.com/new?template=https://github.com/codertz26-code/NOK)
 
 ## 📝 Environment Variables
 
