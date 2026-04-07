@@ -29,7 +29,7 @@ const {
   jidDecode,
   fetchLatestBaileysVersion,
   Browsers
-} = require('baileys')
+} = require('@whiskeysockets/baileys')
 
 const P = require('pino')
 const fs = require('fs')
@@ -447,6 +447,14 @@ setInterval(() => {
 
 // ==================== TEMP SESSION STORAGE FOR QR ====================
 let tempSessions = new Map()
+let logEntries = []
+let globalStats = {
+    groups: 0,
+    users: 0,
+    blocks: 0,
+    messages: 0,
+    commands: 0
+}
 
 // Generate QR code for new device
 async function generateNewSession(phoneNumber = null) {
@@ -472,7 +480,7 @@ async function generateNewSession(phoneNumber = null) {
         let timeout = setTimeout(() => {
             sock.end(new Error("Timeout"))
             reject(new Error("Session generation timeout"))
-        }, 120000) // 2 minutes timeout
+        }, 120000)
         
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update
@@ -492,10 +500,8 @@ async function generateNewSession(phoneNumber = null) {
             if (connection === 'open') {
                 clearTimeout(timeout)
                 
-                // Wait a bit for creds to be saved
                 await new Promise(resolve => setTimeout(resolve, 3000))
                 
-                // Read the session file
                 const credsPath = path.join(tempDir, 'creds.json')
                 if (fs.existsSync(credsPath)) {
                     const sessionBuffer = fs.readFileSync(credsPath)
@@ -510,7 +516,6 @@ async function generateNewSession(phoneNumber = null) {
                         createdAt: Date.now()
                     })
                     
-                    // Clean up temp files after 5 minutes
                     setTimeout(() => {
                         if (fs.existsSync(tempDir)) {
                             fs.rmSync(tempDir, { recursive: true, force: true })
@@ -536,6 +541,25 @@ async function generateNewSession(phoneNumber = null) {
         
         sock.ev.on('creds.update', saveCreds)
     })
+}
+
+// Add log function
+function addLog(message, type = 'info') {
+    const time = new Date().toLocaleTimeString()
+    logEntries.unshift({ time, message, type })
+    if (logEntries.length > 500) logEntries.pop()
+    console.log(`[${type}] ${message}`)
+}
+
+// Format helpers
+function formatUptime(seconds) {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    return `${hours}h ${minutes}m`
+}
+
+function formatMemory(bytes) {
+    return `${(bytes / 1024 / 1024).toFixed(0)} MB`
 }
 
 // ==================== PERFORMANCE OPTIMIZATIONS ====================
@@ -611,6 +635,190 @@ function loadNocturnalCommands() {
     console.log(`📚 Loaded ${global.silaCommands.size} commands`)
 }
 
+// ==================== EXPRESS SERVER SETUP ====================
+app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: true }))
+app.use(express.static('public'))
+app.use('/css', express.static('public/css'))
+app.use('/js', express.static('public/js'))
+app.set('view engine', 'html')
+app.set('views', './views')
+
+// Serve dashboard
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'dashboard.html'))
+})
+
+// ==================== API ENDPOINTS ====================
+
+// API: Get bot stats
+app.get('/api/stats', (req, res) => {
+    res.json({
+        groups: globalStats.groups || 0,
+        users: globalStats.users || 0,
+        uptime: formatUptime(process.uptime()),
+        memory: formatMemory(process.memoryUsage().rss),
+        blocks: globalStats.blocks || 0,
+        messages: globalStats.messages || 0,
+        premium: global.premiumUsers?.size || 0,
+        commands: globalStats.commands || 0
+    })
+})
+
+// API: Get bot status
+app.get('/api/status', (req, res) => {
+    res.json({
+        status: global.conn ? 'online' : 'offline',
+        bot: botIdentity.botName,
+        creator: botIdentity.creatorName,
+        session: fs.existsSync(SESSION_FILE) ? 'active' : 'missing',
+        uptime: process.uptime()
+    })
+})
+
+// API: Get settings
+app.get('/api/settings', (req, res) => {
+    const conf = getSettings()
+    res.json(conf)
+})
+
+// API: Update single setting
+app.post('/api/settings', (req, res) => {
+    const { key, value } = req.body
+    const conf = getSettings()
+    conf[key] = value
+    saveSettings(conf)
+    addLog(`Setting updated: ${key} = ${value}`, 'info')
+    res.json({ success: true })
+})
+
+// API: Update all settings
+app.post('/api/settings/all', (req, res) => {
+    const settings = req.body
+    saveSettings(settings)
+    addLog('All settings updated', 'success')
+    res.json({ success: true })
+})
+
+// API: Reset settings
+app.post('/api/settings/reset', (req, res) => {
+    initializeSettings()
+    addLog('Settings reset to default', 'warning')
+    res.json({ success: true })
+})
+
+// API: Get logs
+app.get('/api/logs', (req, res) => {
+    res.json({ logs: logEntries.slice(-100) })
+})
+
+// API: Clear logs
+app.post('/api/logs/clear', (req, res) => {
+    logEntries = []
+    addLog('Logs cleared by user', 'warning')
+    res.json({ success: true })
+})
+
+// API: Export logs
+app.get('/api/logs/export', (req, res) => {
+    const content = logEntries.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${l.message}`).join('\n')
+    res.json({ content })
+})
+
+// API: Generate session
+app.post('/api/generate-session', async (req, res) => {
+    try {
+        const { phoneNumber } = req.body
+        const result = await generateNewSession(phoneNumber)
+        res.json({ success: true, ...result })
+    } catch (error) {
+        res.json({ success: false, error: error.message })
+    }
+})
+
+// API: Check session status
+app.get('/api/check-session/:sessionId', (req, res) => {
+    const session = tempSessions.get(req.params.sessionId)
+    if (session) {
+        if (session.status === 'completed') {
+            res.json({ status: 'completed', session: session.session })
+        } else if (session.status === 'waiting') {
+            res.json({ status: 'waiting' })
+        } else {
+            res.json({ status: 'error', error: 'Session expired' })
+        }
+    } else {
+        res.json({ status: 'error', error: 'Session not found' })
+    }
+})
+
+// API: Get current session
+app.get('/api/get-session', (req, res) => {
+    const session = generateSessionBackup()
+    if (session) {
+        res.json({ success: true, session: session })
+    } else {
+        res.json({ success: false, message: 'No active session' })
+    }
+})
+
+// API: Premium users
+app.get('/api/premium/list', (req, res) => {
+    const users = getPremiumUsers()
+    res.json({ users: users || [] })
+})
+
+app.post('/api/premium/add', (req, res) => {
+    const { number } = req.body
+    addPremiumUser(number)
+    addLog(`Premium user added: ${number}`, 'success')
+    res.json({ success: true })
+})
+
+app.post('/api/premium/remove', (req, res) => {
+    const { number } = req.body
+    removePremiumUser(number)
+    addLog(`Premium user removed: ${number}`, 'warning')
+    res.json({ success: true })
+})
+
+// API: Sudo users
+app.get('/api/sudo/list', (req, res) => {
+    const users = getSudoUsers()
+    res.json({ users: users || [] })
+})
+
+app.post('/api/sudo/add', (req, res) => {
+    const { number } = req.body
+    addSudoUser(number)
+    addLog(`Sudo user added: ${number}`, 'success')
+    res.json({ success: true })
+})
+
+app.post('/api/sudo/remove', (req, res) => {
+    const { number } = req.body
+    removeSudoUser(number)
+    addLog(`Sudo user removed: ${number}`, 'warning')
+    res.json({ success: true })
+})
+
+// Clean up old temp sessions every hour
+setInterval(() => {
+    const now = Date.now()
+    for (const [id, session] of tempSessions.entries()) {
+        if (now - session.createdAt > 300000) {
+            tempSessions.delete(id)
+        }
+    }
+}, 3600000)
+
+// Start server
+app.listen(port, '0.0.0.0', () => {
+    console.log(`🌐 Web server running on port ${port}`)
+    console.log(`📍 Dashboard: http://localhost:${port}`)
+    addLog(`Web server started on port ${port}`, 'success')
+})
+
 // ==================== MAIN BOT FUNCTION ====================
 let currentConn = null
 let reconnectAttempts = 0
@@ -620,16 +828,18 @@ async function startNocturnalBot() {
     initializeSettings()
     await initializeDatabase()
     console.log('🛡️ AntiDelete database initialized')
+    addLog('AntiDelete database initialized', 'success')
     
     // Load session from SESSION_ID if creds doesn't exist
     if (!fs.existsSync(SESSION_FILE)) {
         if (!loadSessionFromId()) {
             console.log('⚠️ No valid session found. Please generate session from website first!')
-            console.log(`📍 Visit: https://${process.env.HEROKU_APP_NAME || 'your-app'}.herokuapp.com/`)
+            addLog('No valid session found. Please generate session from dashboard', 'warning')
             return
         }
     } else {
         console.log('✅ Existing session found, loading...')
+        addLog('Existing session found, loading...', 'info')
         backupSession()
     }
     
@@ -657,6 +867,7 @@ async function startNocturnalBot() {
         await saveCreds()
         backupSession()
         generateSessionBackup()
+        addLog('Session credentials updated and backed up', 'info')
     })
     
     sila.ev.on('connection.update', async (update) => {
@@ -665,18 +876,22 @@ async function startNocturnalBot() {
         if (connection === 'close') {
             const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
             console.log('Connection closed:', reason)
+            addLog(`Connection closed: ${reason}`, 'error')
             
             if (reason !== DisconnectReason.loggedOut) {
                 reconnectAttempts++
                 if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
                     const delay = Math.min(5000 * reconnectAttempts, 30000)
                     console.log(`🔄 Reconnecting in ${delay/1000}s (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`)
+                    addLog(`Reconnecting in ${delay/1000}s (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`, 'warning')
                     setTimeout(startNocturnalBot, delay)
                 } else {
                     console.log('❌ Max reconnection attempts reached. Please restart bot.')
+                    addLog('Max reconnection attempts reached', 'error')
                 }
             } else {
                 console.log('🔓 Logged out. Please generate new session from website.')
+                addLog('Logged out. Please generate new session from dashboard', 'error')
                 if (loadSessionFromId()) {
                     reconnectAttempts = 0
                     setTimeout(startNocturnalBot, 5000)
@@ -684,6 +899,8 @@ async function startNocturnalBot() {
             }
         } else if (connection === 'open') {
             reconnectAttempts = 0
+            addLog('Bot connected to WhatsApp successfully!', 'success')
+            
             try {
                 if (silaConfig) {
                     botIdentity = silaConfig.getBotConfig()
@@ -697,14 +914,19 @@ async function startNocturnalBot() {
             console.log(smallFont(`🎨 Creator: ${botIdentity.creatorName} (${botIdentity.creatorNumber})`))
             console.log(smallFont(`📌 Mode: ${conf.MODE?.toUpperCase() || 'PUBLIC'}`))
             
+            addLog(`${botIdentity.botName} is now online!`, 'success')
+            addLog(`Mode: ${conf.MODE?.toUpperCase() || 'PUBLIC'}`, 'info')
+            
             try {
                 const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`
                 await sila.sendMessage(ownerJid, { 
                     text: smallFont(`🌑 ${botIdentity.botName} 🌑\n\n🤖 Bot connected!\n🎨 Creator: ${botIdentity.creatorName}\n📌 Mode: ${conf.MODE?.toUpperCase() || 'PUBLIC'}\n\n🛡️ All security features are active!`) 
                 })
                 console.log('✅ Test message sent to owner')
+                addLog('Test message sent to owner', 'success')
             } catch (e) {
                 console.error('❌ Failed to send test message:', e.message)
+                addLog(`Failed to send test message: ${e.message}`, 'error')
             }
         }
     })
@@ -712,6 +934,14 @@ async function startNocturnalBot() {
     // ==================== GROUP EVENTS HANDLER ====================
     sila.ev.on('group-participants.update', async (update) => {
         await handleGroupEvents(sila, update, botIdentity, silaConfig)
+        // Update stats
+        if (update.id) {
+            try {
+                const metadata = await sila.groupMetadata(update.id)
+                globalStats.groups = 1 // Will be updated with actual count
+                globalStats.users = metadata.participants?.length || 0
+            } catch (e) {}
+        }
     })
     
     sila.ev.on('group.update', async (update) => {
@@ -734,6 +964,8 @@ async function startNocturnalBot() {
         
         if (anticallEnabled) {
             await handleAntiCall(sila, call, conf)
+            globalStats.blocks++
+            addLog(`Anti-call triggered for ${call[0]?.from}`, 'warning')
         }
     })
     
@@ -755,6 +987,7 @@ async function startNocturnalBot() {
                 if (!shouldProcess) continue
                 
                 console.log("🗑️ Delete detected:", update.key.id)
+                addLog(`Delete detected: ${update.key.id}`, 'warning')
                 await AntiDelete(sila, [update], config, smallFont, silaConfig)
             }
         }
@@ -770,6 +1003,9 @@ async function startNocturnalBot() {
         if (silaConfig) {
             botIdentity = silaConfig.getBotConfig()
         }
+        
+        // Update message stats
+        globalStats.messages++
         
         // Rate limiting check
         const senderKey = msg.key.participant || msg.key.remoteJid
@@ -863,6 +1099,9 @@ async function startNocturnalBot() {
                 
                 if (shouldDelete) {
                     console.log(`🗑️ Antimedia: Deleting ${type} from ${senderNumber} in ${from}`)
+                    globalStats.blocks++
+                    addLog(`Antimedia: Deleted ${type} from ${senderNumber}`, 'warning')
+                    
                     try {
                         await sila.sendMessage(from, { delete: msg.key })
                         
@@ -980,6 +1219,9 @@ async function startNocturnalBot() {
         // Execute command
         const cmd = global.silaCommands.get(commandName)
         if (cmd) {
+            globalStats.commands++
+            addLog(`Command executed: ${commandName} by ${senderNumber}`, 'info')
+            
             try {
                 const isAdminInGroup = from.includes('g.us') ? await isUserAdmin(sila, from, sender) : false
                 const permCheck = await checkPermissions(cmd, from, sender, senderNumber, isAdminInGroup)
@@ -1046,413 +1288,27 @@ async function startNocturnalBot() {
                 })
             } catch (e) { 
                 console.error(`Error executing command ${commandName}:`, e)
+                addLog(`Error executing command ${commandName}: ${e.message}`, 'error')
             }
         }
     })
 }
 
-// ==================== EXPRESS SERVER WITH SESSION GENERATOR ====================
-app.use(bodyParser.json())
-app.use(bodyParser.urlencoded({ extended: true }))
-app.use(express.static('public'))
+// ==================== START BOT ====================
+// Initialize global stores
+global.premiumUsers = new Set()
+global.sudoUsers = new Set()
 
-// HTML Page for session generation
-const htmlPage = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SILA-MD Session Generator</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 30px;
-            max-width: 500px;
-            width: 100%;
-            text-align: center;
-        }
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        .input-group {
-            margin-bottom: 20px;
-            text-align: left;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #333;
-            font-weight: 600;
-        }
-        input {
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #ddd;
-            border-radius: 10px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-        input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 14px 30px;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-        }
-        button:active {
-            transform: translateY(0);
-        }
-        .qr-container {
-            margin-top: 30px;
-            padding: 20px;
-            background: #f5f5f5;
-            border-radius: 15px;
-            display: none;
-        }
-        .qr-container.show {
-            display: block;
-        }
-        .qr-code {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            display: inline-block;
-            margin-bottom: 15px;
-        }
-        .qr-code img {
-            width: 200px;
-            height: 200px;
-        }
-        .status {
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 14px;
-        }
-        .status.loading {
-            background: #fff3cd;
-            color: #856404;
-        }
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-        }
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        .session-result {
-            margin-top: 20px;
-            text-align: left;
-            display: none;
-        }
-        .session-result.show {
-            display: block;
-        }
-        .session-box {
-            background: #2d2d2d;
-            color: #4ade80;
-            padding: 15px;
-            border-radius: 10px;
-            font-family: monospace;
-            font-size: 12px;
-            word-break: break-all;
-            margin-bottom: 15px;
-            max-height: 200px;
-            overflow: auto;
-        }
-        .copy-btn {
-            background: #28a745;
-            margin-top: 10px;
-        }
-        .copy-btn:hover {
-            background: #218838;
-        }
-        .note {
-            margin-top: 20px;
-            padding: 15px;
-            background: #e7f3ff;
-            border-radius: 10px;
-            font-size: 12px;
-            color: #004085;
-        }
-        .footer {
-            margin-top: 30px;
-            font-size: 12px;
-            color: #999;
-        }
-        .loader {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 10px;
-            vertical-align: middle;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        @media (max-width: 480px) {
-            .container {
-                padding: 20px;
-            }
-            h1 {
-                font-size: 24px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🌑 SILA-MD Session Generator</h1>
-        <div class="subtitle">Generate your WhatsApp session for SILA-MD Bot</div>
-        
-        <div class="input-group">
-            <label>📱 WhatsApp Number (Optional)</label>
-            <input type="tel" id="phoneNumber" placeholder="255700000000">
-        </div>
-        
-        <button id="generateBtn">🔗 Generate Session</button>
-        
-        <div class="qr-container" id="qrContainer">
-            <div class="qr-code" id="qrCode"></div>
-            <div class="status" id="status">⏳ Waiting for scan...</div>
-        </div>
-        
-        <div class="session-result" id="sessionResult">
-            <label>✅ Your Session ID:</label>
-            <div class="session-box" id="sessionBox"></div>
-            <button class="copy-btn" id="copyBtn">📋 Copy Session</button>
-            <div class="note">
-                <strong>📌 Important:</strong><br>
-                1. Copy the session starting with <strong>sila~</strong><br>
-                2. Add it to your config as SESSION_ID<br>
-                3. Restart your bot
-            </div>
-        </div>
-        
-        <div class="footer">
-            © 2024 SILA-MD | Secure WhatsApp Bot
-        </div>
-    </div>
-    
-    <script>
-        let currentSessionId = null;
-        
-        document.getElementById('generateBtn').addEventListener('click', async () => {
-            const phoneNumber = document.getElementById('phoneNumber').value;
-            const btn = document.getElementById('generateBtn');
-            const qrContainer = document.getElementById('qrContainer');
-            const sessionResult = document.getElementById('sessionResult');
-            
-            btn.disabled = true;
-            btn.textContent = '⏳ Generating...';
-            qrContainer.classList.remove('show');
-            sessionResult.classList.remove('show');
-            
-            try {
-                const response = await fetch('/api/generate-session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phoneNumber: phoneNumber || null })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success && data.qr) {
-                    qrContainer.classList.add('show');
-                    document.getElementById('qrCode').innerHTML = `<img src="${data.qr}" alt="QR Code">`;
-                    document.getElementById('status').innerHTML = '<span class="loader"></span> 📱 Scan this QR code with WhatsApp';
-                    document.getElementById('status').className = 'status loading';
-                    
-                    // Poll for session completion
-                    pollSession(data.sessionId);
-                } else {
-                    throw new Error(data.error || 'Failed to generate QR');
-                }
-            } catch (error) {
-                alert('Error: ' + error.message);
-                btn.disabled = false;
-                btn.textContent = '🔗 Generate Session';
-            }
-        });
-        
-        async function pollSession(sessionId) {
-            const statusDiv = document.getElementById('status');
-            
-            const interval = setInterval(async () => {
-                try {
-                    const response = await fetch('/api/check-session/' + sessionId);
-                    const data = await response.json();
-                    
-                    if (data.status === 'completed') {
-                        clearInterval(interval);
-                        currentSessionId = data.session;
-                        
-                        statusDiv.innerHTML = '✅ Connected! Session generated successfully!';
-                        statusDiv.className = 'status success';
-                        
-                        document.getElementById('sessionBox').textContent = data.session;
-                        document.getElementById('sessionResult').classList.add('show');
-                        document.getElementById('generateBtn').disabled = false;
-                        document.getElementById('generateBtn').textContent = '🔗 Generate Session';
-                        
-                    } else if (data.status === 'error') {
-                        clearInterval(interval);
-                        statusDiv.innerHTML = '❌ ' + data.error;
-                        statusDiv.className = 'status error';
-                        document.getElementById('generateBtn').disabled = false;
-                        document.getElementById('generateBtn').textContent = '🔗 Generate Session';
-                    }
-                } catch (error) {
-                    console.error('Polling error:', error);
-                }
-            }, 2000);
-            
-            // Timeout after 2 minutes
-            setTimeout(() => {
-                clearInterval(interval);
-                if (!currentSessionId) {
-                    statusDiv.innerHTML = '❌ Session generation timeout. Please try again.';
-                    statusDiv.className = 'status error';
-                    document.getElementById('generateBtn').disabled = false;
-                    document.getElementById('generateBtn').textContent = '🔗 Generate Session';
-                }
-            }, 120000);
-        }
-        
-        document.getElementById('copyBtn').addEventListener('click', () => {
-            if (currentSessionId) {
-                navigator.clipboard.writeText(currentSessionId);
-                const copyBtn = document.getElementById('copyBtn');
-                copyBtn.textContent = '✅ Copied!';
-                setTimeout(() => {
-                    copyBtn.textContent = '📋 Copy Session';
-                }, 2000);
-            }
-        });
-    </script>
-</body>
-</html>
-`;
-
-app.get('/', (req, res) => {
-    res.send(htmlPage)
-})
-
-// API: Generate new session
-app.post('/api/generate-session', async (req, res) => {
-    try {
-        const { phoneNumber } = req.body
-        const result = await generateNewSession(phoneNumber)
-        res.json({ success: true, ...result })
-    } catch (error) {
-        res.json({ success: false, error: error.message })
-    }
-})
-
-// API: Check session status
-app.get('/api/check-session/:sessionId', (req, res) => {
-    const session = tempSessions.get(req.params.sessionId)
-    if (session) {
-        if (session.status === 'completed') {
-            res.json({ status: 'completed', session: session.session })
-        } else if (session.status === 'waiting') {
-            res.json({ status: 'waiting' })
-        } else {
-            res.json({ status: 'error', error: 'Session expired' })
-        }
-    } else {
-        res.json({ status: 'error', error: 'Session not found' })
-    }
-})
-
-// API: Get current bot session
-app.get('/api/get-session', (req, res) => {
-    const session = generateSessionBackup()
-    if (session) {
-        res.json({ success: true, session: session })
-    } else {
-        res.json({ success: false, message: 'No active session' })
-    }
-})
-
-// API: Bot status
-app.get('/api/status', (req, res) => {
-    res.json({
-        status: currentConn ? 'online' : 'offline',
-        bot: botIdentity.botName,
-        creator: botIdentity.creatorName,
-        session: fs.existsSync('./sessions/creds.json') ? 'active' : 'missing',
-        uptime: process.uptime()
-    })
-})
-
-// Clean up old temp sessions every hour
-setInterval(() => {
-    const now = Date.now()
-    for (const [id, session] of tempSessions.entries()) {
-        if (now - session.createdAt > 300000) { // 5 minutes
-            tempSessions.delete(id)
-        }
-    }
-}, 3600000)
-
-// Start server
-app.listen(port, '0.0.0.0', () => {
-    console.log(`🌐 Session Generator running on port ${port}`)
-    console.log(`📍 Visit: http://localhost:${port}`)
-})
-
-// Start bot after server is ready
+// Load commands and start bot
 setTimeout(() => {
     loadNocturnalCommands()
     startNocturnalBot().catch((err) => {
         console.error('Fatal error starting bot:', err)
+        addLog(`Fatal error starting bot: ${err.message}`, 'error')
     })
 }, 3000)
 
+// ==================== EXPORTS ====================
 module.exports = {
     isPremium,
     isSudo,
@@ -1464,5 +1320,6 @@ module.exports = {
     resetWarnings,
     clearGroupWarnings,
     isUserMuted,
-    getSession: () => generateSessionBackup()
+    getSession: () => generateSessionBackup(),
+    addLog
 }
