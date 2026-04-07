@@ -1,0 +1,68 @@
+{
+  "name": "SILA-TECH-Bot",
+  "description": "SILA-TECH WhatsApp Bot with Session Generator",
+  "repository": "https://github.com/SilaTech/Nocturnal-MD",
+  "logo": "https://files.catbox.moe/36vahk.png",
+  "keywords": ["whatsapp", "bot", "baileys", "sila", "md"],
+  "env": {
+    "SESSION_ID": {
+      "description": "Your WhatsApp session ID (format: sila~base64)",
+      "required": false,
+      "value": ""
+    },
+    "OWNER_NUMBER": {
+      "description": "Your WhatsApp number (without @s.whatsapp.net)",
+      "required": true,
+      "value": "255650034217"
+    },
+    "MODE": {
+      "description": "Bot mode: public, private, inbox, group, self",
+      "required": false,
+      "value": "public"
+    },
+    "PREFIX": {
+      "description": "Command prefix",
+      "required": false,
+      "value": "."
+    },
+    "AUTO_REACT": {
+      "description": "Auto react to messages",
+      "required": false,
+      "value": "false"
+    },
+    "AUTO_VIEW_STATUS": {
+      "description": "Auto view status updates",
+      "required": false,
+      "value": "true"
+    },
+    "ANTI_CALL": {
+      "description": "Block incoming calls",
+      "required": false,
+      "value": "false"
+    },
+    "ANTI_LINK": {
+      "description": "Delete group links",
+      "required": false,
+      "value": "true"
+    },
+    "READ_MESSAGE": {
+      "description": "Mark messages as read",
+      "required": false,
+      "value": "false"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-apt"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}
