@@ -29,7 +29,7 @@ const {
   jidDecode,
   fetchLatestBaileysVersion,
   Browsers
-} = require('@whiskeysockets/baileys')
+} = require('baileys')
 
 const P = require('pino')
 const fs = require('fs')
