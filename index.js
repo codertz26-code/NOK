@@ -1,3 +1,14 @@
+console.clear()
+console.log("🌑 Starting NOCTURNAL-MD...")
+
+// ============ GLOBAL ANTI-CRASH ============
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception:", err)
+})
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection:", reason)
+})
+
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -44,7 +55,7 @@ if (!fs.existsSync(path.join(sessionDir, 'creds.json'))) {
   if (!sessionId || sessionId.trim() === '') {
     console.log('❌ No SESSION_ID found! Please add your session to SESSION_ID in config.js');
     console.log('📌 How to get SESSION_ID:');
-    console.log('   1. Run the bot once with QR code enabled temporarily');
+    console.log('   1. Change printQRInTerminal to true temporarily');
     console.log('   2. Scan QR code with WhatsApp');
     console.log('   3. The bot will generate a session in sessions/ folder');
     console.log('   4. Convert the session to base64');
