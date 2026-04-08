@@ -1,15 +1,3 @@
-console.clear()
-console.log("🌑 Starting NOCTURNAL-MD...")
-
-// ============ GLOBAL ANTI-CRASH ============
-process.on("uncaughtException", (err) => {
-  console.error("❌ Uncaught Exception:", err)
-})
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("❌ Unhandled Rejection:", reason)
-})
-
-// Use the correct baileys version for CommonJS
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -35,52 +23,72 @@ const {
 
 const { Boom } = require("@hapi/boom");
 const pino = require("pino");
+const qrcode = require("qrcode-terminal");
 const fs = require('fs');
 const path = require('path');
+const config = require('./config');
 const zlib = require('zlib');
 
-// Load config - create if doesn't exist
-let config = {};
-const configPath = path.join(__dirname, 'config.js');
-if (fs.existsSync(configPath)) {
-  config = require('./config');
-} else {
-  // Default config
-  config = {
-    OWNER_NUMBER: "255000000000",
-    PREFIX: ".",
-    MODE: "public",
-    READ_MESSAGE: true,
-    READ_CMD: true,
-    AUTO_TYPING: false,
-    AUTO_RECORDING: false,
-    AUTO_VIEW_STATUS: false,
-    AUTO_LIKE_STATUS: false,
-    AUTO_REPLY: false,
-    AUTO_REACT: false,
-    ANTI_LINK: false,
-    ANTI_CALL: false,
-    AUTO_REACT_EMOJIS: "❤️,🔥,💯",
-    STATUS_REACT_EMOJIS: "❤️",
-    SESSION_ID: ""
-  };
+// ==================== SESSION SYSTEM (Like SILA-MD) ====================
+// Create sessions directory if not exists
+const sessionDir = path.join(__dirname, 'sessions');
+if (!fs.existsSync(sessionDir)) {
+  fs.mkdirSync(sessionDir, { recursive: true });
+}
+
+// Check if we have SESSION_ID from config
+if (!fs.existsSync(path.join(sessionDir, 'creds.json'))) {
+  // Get SESSION_ID from config.js
+  let sessionId = config.SESSION_ID || '';
+  
+  if (!sessionId || sessionId.trim() === '') {
+    console.log('❌ No SESSION_ID found! Please add your session to SESSION_ID in config.js');
+    console.log('📌 How to get SESSION_ID:');
+    console.log('   1. Run the bot once with QR code enabled temporarily');
+    console.log('   2. Scan QR code with WhatsApp');
+    console.log('   3. The bot will generate a session in sessions/ folder');
+    console.log('   4. Convert the session to base64');
+    console.log('   5. Copy the base64 string starting with "sila~" to config.js');
+    process.exit(1);
+  }
+
+  // Check if session starts with "sila~" (SILA-MD format)
+  let sessdata = sessionId;
+  if (sessionId.startsWith('sila~')) {
+    sessdata = sessionId.replace("sila~", '').trim();
+  }
+  
+  if (!sessdata || sessdata.trim() === '') {
+    console.log('❌ SESSION_ID is empty after processing');
+    process.exit(1);
+  }
+
+  console.log('📥 Extracting session from base64 string...');
+
+  try {
+    // Decode base64 to compressed buffer
+    const compressedBuffer = Buffer.from(sessdata, 'base64');
+    
+    // Decompress using zlib
+    const sessionBuffer = zlib.gunzipSync(compressedBuffer);
+    
+    // Write to creds.json
+    fs.writeFileSync(path.join(sessionDir, 'creds.json'), sessionBuffer);
+    
+    console.log("✅ Session extracted and saved successfully");
+    console.log(`📊 Session size: ${sessionBuffer.length} bytes`);
+    
+  } catch (err) {
+    console.log('❌ Failed to extract session:', err.message);
+    console.log('⚠️ Make sure you copied the FULL session string');
+    console.log('⚠️ Session should start with "sila~" followed by base64 string');
+    process.exit(1);
+  }
 }
 
 // Load central bot configuration
-let botIdentity = {
-  botName: "NOCTURNAL-MD",
-  creatorName: "SILA",
-  creatorNumber: "255000000000",
-  mainSymbol: "🌑",
-  footer: "NOCTURNAL-MD",
-  newsletter: "SILA-MD"
-};
-
-const silaConfigPath = path.join(__dirname, 'silamd', 'sila.js');
-if (fs.existsSync(silaConfigPath)) {
-  const silaConfigModule = require(silaConfigPath);
-  botIdentity = silaConfigModule.getBotConfig();
-}
+const silaConfig = require('./silamd/sila.js');
+let botIdentity = silaConfig.getBotConfig();
 
 // Import database functions
 const { 
@@ -155,69 +163,9 @@ const getSudoUsers = sudoHandler.getSudoUsers;
 
 const isSila = (number) => number === SILA_NUMBER;
 
-// ==================== SESSION SYSTEM (Like SILA-MD) ====================
-// Create sessions directory if not exists
-const sessionDir = path.join(__dirname, 'sessions');
-if (!fs.existsSync(sessionDir)) {
-  fs.mkdirSync(sessionDir, { recursive: true });
-}
-
-// Check if we have SESSION_ID from config
-if (!fs.existsSync(path.join(sessionDir, 'creds.json'))) {
-  // Get SESSION_ID from config.js or environment
-  let sessionId = config.SESSION_ID || '';
-  
-  if (!sessionId || sessionId.trim() === '') {
-    console.log('❌ No SESSION_ID found! Please add your session to SESSION_ID in config.js');
-    console.log('📌 How to get SESSION_ID:');
-    console.log('   1. Run the bot once with QR code enabled');
-    console.log('   2. Scan QR code with WhatsApp');
-    console.log('   3. The bot will generate a session in sessions/ folder');
-    console.log('   4. Convert the session to base64 using: node session-to-base64.js');
-    console.log('   5. Copy the base64 string starting with "sila~" to config.js');
-    process.exit(1);
-  }
-
-  // Check if session starts with "sila~" (SILA-MD format)
-  let sessdata = sessionId;
-  if (sessionId.startsWith('sila~')) {
-    sessdata = sessionId.replace("sila~", '').trim();
-  }
-  
-  if (!sessdata || sessdata.trim() === '') {
-    console.log('❌ SESSION_ID is empty after processing');
-    process.exit(1);
-  }
-
-  console.log('📥 Extracting session from base64 string...');
-
-  try {
-    // Decode base64 to compressed buffer
-    const compressedBuffer = Buffer.from(sessdata, 'base64');
-    
-    // Decompress using zlib
-    const sessionBuffer = zlib.gunzipSync(compressedBuffer);
-    
-    // Write to creds.json
-    fs.writeFileSync(path.join(sessionDir, 'creds.json'), sessionBuffer);
-    
-    console.log("✅ Session extracted and saved successfully");
-    console.log(`📊 Session size: ${sessionBuffer.length} bytes`);
-    
-  } catch (err) {
-    console.log('❌ Failed to extract session:', err.message);
-    console.log('⚠️ Make sure you copied the FULL session string');
-    console.log('⚠️ Session should start with "sila~" followed by base64 string');
-    process.exit(1);
-  }
-}
-
 // ==================== FONT FUNCTION ====================
 const smallFont = (text) => {
-    if (typeof silaConfig.applyFont === 'function') {
-      return silaConfig.applyFont(text);
-    }
-    return text;
+    return silaConfig.applyFont(text);
 };
 
 // ==================== GROUP SETTINGS MANAGER ====================
@@ -482,56 +430,46 @@ async function startNocturnalBot() {
     await initializeDatabase();
     console.log('🛡️ AntiDelete database initialized');
     
-    // Use sessions folder for auth
     const { state, saveCreds } = await useMultiFileAuthState('./sessions');
     const { version } = await fetchLatestBaileysVersion();
     
     const sila = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: false,  // QR code disabled - using sessions only
+        printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
-        browser: [botIdentity.botName || "NOCTURNAL-MD", "Chrome", "3.0.0"],
-        syncFullHistory: true,
-        defaultQueryTimeoutMs: undefined,
-        keepAliveIntervalMs: 30000,  // Keep connection alive
-        connectTimeoutMs: 60000,
-        emitOwnEvents: true,
-        fireInitQueries: true,
-        generateHighQualityLinkPreview: true
+        browser: [botIdentity.botName || "NOCTURNAL-MD", "Chrome", "3.0.0"]
     });
 
     sila.ev.on('creds.update', saveCreds);
 
     sila.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+        
+        if (qr) qrcode.generate(qr, { small: true });
         
         if (connection === 'close') {
             const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
             console.log('Connection closed:', reason);
             if (reason !== DisconnectReason.loggedOut) {
-                console.log('🔄 Attempting to reconnect in 5 seconds...');
                 setTimeout(startNocturnalBot, 5000);
-            } else {
-                console.log('❌ Logged out. Please update your SESSION_ID');
-                console.log('📌 Get new session by running with QR code temporarily');
             }
         } else if (connection === 'open') {
+            botIdentity = silaConfig.getBotConfig();
             const conf = getSettings();
             console.log(smallFont(`🌑 ${botIdentity.botName} 🌑`));
-            console.log(smallFont(`🚀 Bot is online!`));
-            console.log(smallFont(`👤 Owner: ${config.OWNER_NUMBER}`));
-            console.log(smallFont(`🎨 Creator: ${botIdentity.creatorName} (${botIdentity.creatorNumber})`));
-            console.log(smallFont(`📌 Mode: ${conf.MODE?.toUpperCase() || 'PUBLIC'}`));
-            console.log(smallFont(`🛡️ Antidelete: DM=${conf.antidelete_dm ? 'ON' : 'OFF'} | Group=${conf.antidelete_group ? 'ON' : 'OFF'}`));
-            console.log(smallFont(`🔗 Antilink: ${conf.antilink ? 'ON' : 'OFF'}`));
-            console.log(smallFont(`🗑️ Antimedia: ${conf.antimedia ? 'ON' : 'OFF'}`));
-            console.log(smallFont(`📦 Session: Loaded from sessions/creds.json`));
+            console.log(smallFont(`🚀 ʙᴏᴛ ɪs ᴏɴʟɪɴᴇ!`));
+            console.log(smallFont(`👤 ᴏᴡɴᴇʀ: ${config.OWNER_NUMBER}`));
+            console.log(smallFont(`🎨 ᴄʀᴇᴀᴛᴏʀ: ${botIdentity.creatorName} (${botIdentity.creatorNumber})`));
+            console.log(smallFont(`📌 ᴍᴏᴅᴇ: ${conf.MODE?.toUpperCase() || 'PUBLIC'}`));
+            console.log(smallFont(`🛡️ ᴀɴᴛɪᴅᴇʟᴇᴛᴇ: ᴅᴍ=${conf.antidelete_dm ? 'ᴏɴ' : 'ᴏғғ'} | ɢʀᴏᴜᴘ=${conf.antidelete_group ? 'ᴏɴ' : 'ᴏғғ'}`));
+            console.log(smallFont(`🔗 ᴀɴᴛɪʟɪɴᴋ: ${conf.antilink ? 'ᴏɴ' : 'ᴏғғ'}`));
+            console.log(smallFont(`🗑️ ᴀɴᴛɪᴍᴇᴅɪᴀ: ${conf.antimedia ? 'ᴏɴ' : 'ᴏғғ'}`));
             
             try {
                 const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
                 await sila.sendMessage(ownerJid, { 
-                    text: smallFont(`🌑 ${botIdentity.botName} 🌑\n\n🤖 Bot connected!\n🎨 Creator: ${botIdentity.creatorName}\n📌 Mode: ${conf.MODE?.toUpperCase() || 'PUBLIC'}\n📦 Session loaded successfully!\n\n🛡️ All security features are active!`) 
+                    text: smallFont(`🌑 ${botIdentity.botName} 🌑\n\n🤖 ʙᴏᴛ ᴄᴏɴɴᴇᴄᴛᴇᴅ!\n🎨 ᴄʀᴇᴀᴛᴏʀ: ${botIdentity.creatorName}\n📌 ᴍᴏᴅᴇ: ${conf.MODE?.toUpperCase() || 'PUBLIC'}\n\n🛡️ ᴀʟʟ sᴇᴄᴜʀɪᴛʏ ғᴇᴀᴛᴜʀᴇs ᴀʀᴇ ᴀᴄᴛɪᴠᴇ!`) 
                 });
                 console.log('✅ Test message sent to owner');
             } catch (e) {
@@ -598,22 +536,7 @@ async function startNocturnalBot() {
         
         const from = msg.key.remoteJid;
         const conf = getSettings();
-
-        // Handle status messages
-        if (from === 'status@broadcast') {
-            const participant = decodeJid(msg.key.participant || msg.key.remoteJid);
-            if (!participant) return;
-
-            if (conf.autoviewstatus) await sila.readMessages([msg.key]);
-            
-            if (conf.autolikestatus) {
-                const emojis = (config.STATUS_REACT_EMOJIS || botIdentity.mainSymbol).split(',');
-                await sila.sendMessage('status@broadcast', { 
-                    react: { text: emojis[Math.floor(Math.random() * emojis.length)], key: msg.key } 
-                }, { statusJidList: [participant] });
-            }
-            return;
-        }
+        botIdentity = silaConfig.getBotConfig();
 
         // SAVE MESSAGE FOR ANTIDELETE
         try {
@@ -707,7 +630,7 @@ async function startNocturnalBot() {
                         if (config.OWNER_NUMBER) {
                             const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
                             await sila.sendMessage(ownerJid, {
-                                text: smallFont(`> 👻 ANTI MEDIA\n\n> Group: ${from}\n> Sender: @${senderNumber}\n> Type: ${type}\n> Action: DELETED`),
+                                text: smallFont(`> 👻 ᴀɴᴛɪᴍᴇᴅɪᴀ\n\n> ɢʀᴏᴜᴘ: ${from}\n> sᴇɴᴅᴇʀ: @${senderNumber}\n> ᴛʏᴘᴇ: ${type}\n> ᴀᴄᴛɪᴏɴ: ᴅᴇʟᴇᴛᴇᴅ`),
                                 mentions: [sender]
                             });
                         }
@@ -721,6 +644,28 @@ async function startNocturnalBot() {
 
         if (config.READ_MESSAGE && !msg.key.fromMe) {
             await sila.readMessages([msg.key]);
+        }
+
+        // Status handler
+        if (from === 'status@broadcast') {
+            const participant = decodeJid(msg.key.participant || msg.key.remoteJid);
+            if (!participant) return;
+
+            if (conf.autoviewstatus) await sila.readMessages([msg.key]);
+            
+            if (conf.autolikestatus) {
+                const emojis = (config.STATUS_REACT_EMOJIS || botIdentity.mainSymbol).split(',');
+                await sila.sendMessage('status@broadcast', { 
+                    react: { text: emojis[Math.floor(Math.random() * emojis.length)], key: msg.key } 
+                }, { statusJidList: [participant] });
+            }
+            
+            if (config.AUTO_STATUS_REACT) {
+                await sila.sendMessage('status@broadcast', { 
+                    text: botIdentity.botName 
+                }, { quoted: msg, statusJidList: [participant] });
+            }
+            return;
         }
 
         if (conf.autotyping) await sila.sendPresenceUpdate('composing', from);
@@ -741,14 +686,15 @@ async function startNocturnalBot() {
             || "";
 
         if (conf.autoreply && !msg.key.fromMe && body.trim() !== "" && !body.startsWith(conf.prefix)) {
-            const autoreplyMsg = "Thanks for messaging {botName}! I'll respond shortly.";
+            const autoreplyMsg = silaConfig.getMessage('autoreply');
             const formattedMsg = autoreplyMsg
                 .replace(/{botSymbol}/g, botIdentity.mainSymbol)
                 .replace(/{botName}/g, botIdentity.botName)
                 .replace(/{creator}/g, botIdentity.creatorName);
             
             await sila.sendMessage(from, { 
-                text: smallFont(`> ${formattedMsg}`)
+                text: smallFont(`> ${formattedMsg}`),
+                contextInfo: silaConfig.getContextInfo(sender, botIdentity)
             }, { quoted: msg });
         }
 
@@ -797,7 +743,8 @@ async function startNocturnalBot() {
                 
                 if (!permCheck.allowed) {
                     return await sila.sendMessage(from, { 
-                        text: smallFont(`> ${permCheck.message}`)
+                        text: smallFont(`> ${permCheck.message}`),
+                        contextInfo: silaConfig.getContextInfo(sender, botIdentity)
                     }, { quoted: msg });
                 }
                 
@@ -805,7 +752,8 @@ async function startNocturnalBot() {
                     ms: msg,
                     repondre: async (teks) => {
                         return await sila.sendMessage(from, { 
-                            text: smallFont(`${teks}`)
+                            text: smallFont(`${teks}`),
+                            contextInfo: silaConfig.getContextInfo(sender, botIdentity)
                         }, { quoted: msg });
                     },
                     prefixe: conf.prefix,
@@ -827,27 +775,27 @@ async function startNocturnalBot() {
                     resetWarnings: resetWarnings,
                     clearGroupWarnings: clearGroupWarnings,
                     silaConfig: silaConfig,
-                    getFakeContact: () => null,
-                    getContextInfo: (s) => ({ mentionedJid: s ? [s] : [] }),
-                    getBotConfig: () => botIdentity,
-                    applyFont: smallFont,
-                    getAvailableFonts: () => [],
-                    setCurrentFont: () => {},
-                    updateBotName: () => {},
-                    updateCreator: () => {},
-                    updateSymbols: () => {},
-                    updateFooter: () => {},
-                    updateNewsletter: () => {},
-                    updateStatus: () => {},
-                    updateEmojis: () => {},
-                    resetToDefault: () => {},
-                    getImage: () => null,
-                    setImage: () => {},
-                    getMessage: () => "",
-                    setMessage: () => {},
-                    formatSuccess: (msg) => `✅ ${msg}`,
-                    formatError: (msg) => `❌ ${msg}`,
-                    formatWarning: (msg) => `⚠️ ${msg}`,
+                    getFakeContact: silaConfig.getFakeContact,
+                    getContextInfo: (s) => silaConfig.getContextInfo(s || sender, botIdentity),
+                    getBotConfig: () => silaConfig.getBotConfig(),
+                    applyFont: silaConfig.applyFont,
+                    getAvailableFonts: silaConfig.getAvailableFonts,
+                    setCurrentFont: silaConfig.setCurrentFont,
+                    updateBotName: silaConfig.updateBotName,
+                    updateCreator: silaConfig.updateCreator,
+                    updateSymbols: silaConfig.updateSymbols,
+                    updateFooter: silaConfig.updateFooter,
+                    updateNewsletter: silaConfig.updateNewsletter,
+                    updateStatus: silaConfig.updateStatus,
+                    updateEmojis: silaConfig.updateEmojis,
+                    resetToDefault: silaConfig.resetToDefault,
+                    getImage: silaConfig.getImage,
+                    setImage: silaConfig.setImage,
+                    getMessage: silaConfig.getMessage,
+                    setMessage: silaConfig.setMessage,
+                    formatSuccess: silaConfig.formatSuccess,
+                    formatError: silaConfig.formatError,
+                    formatWarning: silaConfig.formatWarning,
                     getGroupSetting: getGroupSetting,
                     setGroupSetting: setGroupSetting,
                     isUserAdmin: isUserAdmin,
