@@ -19,7 +19,7 @@ const {
   jidDecode,
   fetchLatestBaileysVersion,
   Browsers
-} = require('baileys');
+} = require('@whiskeysockets/baileys');
 
 const { Boom } = require("@hapi/boom");
 const pino = require("pino");
