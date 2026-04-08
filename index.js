@@ -9,6 +9,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("❌ Unhandled Rejection:", reason)
 })
 
+// Use the correct baileys version for CommonJS
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -36,12 +37,50 @@ const { Boom } = require("@hapi/boom");
 const pino = require("pino");
 const fs = require('fs');
 const path = require('path');
-const config = require('./config');
 const zlib = require('zlib');
 
+// Load config - create if doesn't exist
+let config = {};
+const configPath = path.join(__dirname, 'config.js');
+if (fs.existsSync(configPath)) {
+  config = require('./config');
+} else {
+  // Default config
+  config = {
+    OWNER_NUMBER: "255000000000",
+    PREFIX: ".",
+    MODE: "public",
+    READ_MESSAGE: true,
+    READ_CMD: true,
+    AUTO_TYPING: false,
+    AUTO_RECORDING: false,
+    AUTO_VIEW_STATUS: false,
+    AUTO_LIKE_STATUS: false,
+    AUTO_REPLY: false,
+    AUTO_REACT: false,
+    ANTI_LINK: false,
+    ANTI_CALL: false,
+    AUTO_REACT_EMOJIS: "❤️,🔥,💯",
+    STATUS_REACT_EMOJIS: "❤️",
+    SESSION_ID: ""
+  };
+}
+
 // Load central bot configuration
-const silaConfig = require('./silamd/sila.js');
-let botIdentity = silaConfig.getBotConfig();
+let botIdentity = {
+  botName: "NOCTURNAL-MD",
+  creatorName: "SILA",
+  creatorNumber: "255000000000",
+  mainSymbol: "🌑",
+  footer: "NOCTURNAL-MD",
+  newsletter: "SILA-MD"
+};
+
+const silaConfigPath = path.join(__dirname, 'silamd', 'sila.js');
+if (fs.existsSync(silaConfigPath)) {
+  const silaConfigModule = require(silaConfigPath);
+  botIdentity = silaConfigModule.getBotConfig();
+}
 
 // Import database functions
 const { 
@@ -175,7 +214,10 @@ if (!fs.existsSync(path.join(sessionDir, 'creds.json'))) {
 
 // ==================== FONT FUNCTION ====================
 const smallFont = (text) => {
-    return silaConfig.applyFont(text);
+    if (typeof silaConfig.applyFont === 'function') {
+      return silaConfig.applyFont(text);
+    }
+    return text;
 };
 
 // ==================== GROUP SETTINGS MANAGER ====================
@@ -456,28 +498,7 @@ async function startNocturnalBot() {
         connectTimeoutMs: 60000,
         emitOwnEvents: true,
         fireInitQueries: true,
-        generateHighQualityLinkPreview: true,
-        patchMessageBeforeSending: (message) => {
-            const requiresPatch = !!(
-                message.buttonsMessage ||
-                message.templateMessage ||
-                message.listMessage
-            );
-            if (requiresPatch) {
-                message = {
-                    viewOnceMessage: {
-                        message: {
-                            messageContextInfo: {
-                                deviceListMetadataVersion: 2,
-                                deviceListMetadata: {},
-                            },
-                            ...message,
-                        },
-                    },
-                };
-            }
-            return message;
-        }
+        generateHighQualityLinkPreview: true
     });
 
     sila.ev.on('creds.update', saveCreds);
@@ -496,7 +517,6 @@ async function startNocturnalBot() {
                 console.log('📌 Get new session by running with QR code temporarily');
             }
         } else if (connection === 'open') {
-            botIdentity = silaConfig.getBotConfig();
             const conf = getSettings();
             console.log(smallFont(`🌑 ${botIdentity.botName} 🌑`));
             console.log(smallFont(`🚀 Bot is online!`));
@@ -578,7 +598,6 @@ async function startNocturnalBot() {
         
         const from = msg.key.remoteJid;
         const conf = getSettings();
-        botIdentity = silaConfig.getBotConfig();
 
         // Handle status messages
         if (from === 'status@broadcast') {
@@ -722,15 +741,14 @@ async function startNocturnalBot() {
             || "";
 
         if (conf.autoreply && !msg.key.fromMe && body.trim() !== "" && !body.startsWith(conf.prefix)) {
-            const autoreplyMsg = silaConfig.getMessage('autoreply');
+            const autoreplyMsg = "Thanks for messaging {botName}! I'll respond shortly.";
             const formattedMsg = autoreplyMsg
                 .replace(/{botSymbol}/g, botIdentity.mainSymbol)
                 .replace(/{botName}/g, botIdentity.botName)
                 .replace(/{creator}/g, botIdentity.creatorName);
             
             await sila.sendMessage(from, { 
-                text: smallFont(`> ${formattedMsg}`),
-                contextInfo: silaConfig.getContextInfo(sender, botIdentity)
+                text: smallFont(`> ${formattedMsg}`)
             }, { quoted: msg });
         }
 
@@ -779,8 +797,7 @@ async function startNocturnalBot() {
                 
                 if (!permCheck.allowed) {
                     return await sila.sendMessage(from, { 
-                        text: smallFont(`> ${permCheck.message}`),
-                        contextInfo: silaConfig.getContextInfo(sender, botIdentity)
+                        text: smallFont(`> ${permCheck.message}`)
                     }, { quoted: msg });
                 }
                 
@@ -788,8 +805,7 @@ async function startNocturnalBot() {
                     ms: msg,
                     repondre: async (teks) => {
                         return await sila.sendMessage(from, { 
-                            text: smallFont(`${teks}`),
-                            contextInfo: silaConfig.getContextInfo(sender, botIdentity)
+                            text: smallFont(`${teks}`)
                         }, { quoted: msg });
                     },
                     prefixe: conf.prefix,
@@ -811,27 +827,27 @@ async function startNocturnalBot() {
                     resetWarnings: resetWarnings,
                     clearGroupWarnings: clearGroupWarnings,
                     silaConfig: silaConfig,
-                    getFakeContact: silaConfig.getFakeContact,
-                    getContextInfo: (s) => silaConfig.getContextInfo(s || sender, botIdentity),
-                    getBotConfig: () => silaConfig.getBotConfig(),
-                    applyFont: silaConfig.applyFont,
-                    getAvailableFonts: silaConfig.getAvailableFonts,
-                    setCurrentFont: silaConfig.setCurrentFont,
-                    updateBotName: silaConfig.updateBotName,
-                    updateCreator: silaConfig.updateCreator,
-                    updateSymbols: silaConfig.updateSymbols,
-                    updateFooter: silaConfig.updateFooter,
-                    updateNewsletter: silaConfig.updateNewsletter,
-                    updateStatus: silaConfig.updateStatus,
-                    updateEmojis: silaConfig.updateEmojis,
-                    resetToDefault: silaConfig.resetToDefault,
-                    getImage: silaConfig.getImage,
-                    setImage: silaConfig.setImage,
-                    getMessage: silaConfig.getMessage,
-                    setMessage: silaConfig.setMessage,
-                    formatSuccess: silaConfig.formatSuccess,
-                    formatError: silaConfig.formatError,
-                    formatWarning: silaConfig.formatWarning,
+                    getFakeContact: () => null,
+                    getContextInfo: (s) => ({ mentionedJid: s ? [s] : [] }),
+                    getBotConfig: () => botIdentity,
+                    applyFont: smallFont,
+                    getAvailableFonts: () => [],
+                    setCurrentFont: () => {},
+                    updateBotName: () => {},
+                    updateCreator: () => {},
+                    updateSymbols: () => {},
+                    updateFooter: () => {},
+                    updateNewsletter: () => {},
+                    updateStatus: () => {},
+                    updateEmojis: () => {},
+                    resetToDefault: () => {},
+                    getImage: () => null,
+                    setImage: () => {},
+                    getMessage: () => "",
+                    setMessage: () => {},
+                    formatSuccess: (msg) => `✅ ${msg}`,
+                    formatError: (msg) => `❌ ${msg}`,
+                    formatWarning: (msg) => `⚠️ ${msg}`,
                     getGroupSetting: getGroupSetting,
                     setGroupSetting: setGroupSetting,
                     isUserAdmin: isUserAdmin,
