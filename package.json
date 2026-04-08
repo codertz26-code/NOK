@@ -13,7 +13,7 @@
     "@skycodee/libsignal": "^1.0.13",
     "adm-zip": "^0.5.16",
     "axios": "^0.24.0",
-    "baileys": "github:whofik/baileys-sawit",
+    "@whiskeysockets/baileys": "github:/Sila-Md/SILA.git",
     "body-parser": "^1.20.2",
     "chalk": "^4.1.2",
     "cheerio": "^1.1.0",
